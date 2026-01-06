@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
-import { BubbleMenu } from '@tiptap/react/menus'
+import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Underline from "@tiptap/extension-underline";
@@ -35,32 +35,159 @@ function CowriteEditor() {
     initialContent: "<p></p>",
   });
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        // Disable history when using collaboration
-        history: false,
-      }),
-      Underline,
-      TextStyle,
-      Color,
-      TiptapVeltComments.configure({
-        persistVeltMarks: true,
-      }),
-      Placeholder.configure({
-        placeholder: "Start writing your document...",
-      }),
-      // Add CRDT extension for real-time collaboration
-      ...(VeltCrdt ? [VeltCrdt] : []),
-    ],
-    content: "",
-    editorProps: {
-      attributes: {
-        class:
-          "prose prose-sm sm:prose lg:prose-lg xl:prose-2xl focus:outline-none",
+  const editor = useEditor(
+    {
+      extensions: [
+        StarterKit.configure({
+          // Disable history when using collaboration
+          history: false,
+        }),
+        Underline,
+        TextStyle,
+        Color,
+        TiptapVeltComments.configure({
+          persistVeltMarks: true,
+        }),
+        Placeholder.configure({
+          placeholder: "Start writing your document...",
+        }),
+        // Add CRDT extension for real-time collaboration
+        ...(VeltCrdt ? [VeltCrdt] : []),
+      ],
+      content: "",
+      editorProps: {
+        attributes: {
+          class:
+            "prose prose-sm sm:prose lg:prose-lg xl:prose-2xl focus:outline-none",
+        },
       },
     },
-  }, [VeltCrdt]);
+    [VeltCrdt]
+  );
+
+  // Handle structured content from window.openai.toolOutput
+  useEffect(() => {
+    if (!editor) return;
+
+    const handleGlobalsChange = (event) => {
+      console.log("[Cowrite] Globals changed:", event?.detail?.globals);
+      const toolOutput =
+        event?.detail?.globals?.toolOutput || window.openai?.toolOutput;
+      console.log("[Cowrite] Tool output:", toolOutput);
+
+      // Check if this is a write-content action
+      if (toolOutput && toolOutput.action === "write-content") {
+        console.log("[Cowrite] Processing write-content action");
+        processWriteContent(toolOutput);
+      }
+    };
+
+    // Process write content function
+    const processWriteContent = (toolOutput) => {
+      console.log("[Cowrite] processWriteContent called with:", toolOutput);
+      if (!toolOutput.action === "write-content") return;
+      const { content, format, append } = toolOutput;
+
+      // Format the content based on the format type
+      let htmlContent = "";
+
+      if (format === "heading") {
+        // Split content into lines and make first line h2, rest paragraphs
+        const lines = content.split("\n").filter((line) => line.trim());
+        if (lines.length > 0) {
+          htmlContent = `<h2>${lines[0]}</h2>`;
+          if (lines.length > 1) {
+            htmlContent += lines
+              .slice(1)
+              .map((line) => `<p>${line}</p>`)
+              .join("");
+          }
+        }
+      } else if (format === "list") {
+        // Convert to bullet list
+        const lines = content.split("\n").filter((line) => line.trim());
+        if (lines.length > 0) {
+          htmlContent =
+            "<ul>" + lines.map((line) => `<li>${line}</li>`).join("") + "</ul>";
+        }
+      } else if (format === "auto") {
+        // Auto-detect: if multiple lines with bullets/numbers, make list
+        // If starts with #, make heading
+        // Otherwise make paragraphs
+        const lines = content.split("\n");
+        const trimmedLines = lines.filter((line) => line.trim());
+
+        if (trimmedLines.length === 0) {
+          htmlContent = `<p>${content}</p>`;
+        } else if (content.trim().startsWith("#")) {
+          // Looks like a heading
+          const cleanContent = content.trim().replace(/^#+\s*/, "");
+          htmlContent = `<h2>${cleanContent}</h2>`;
+        } else if (
+          trimmedLines.some(
+            (line) =>
+              /^[\-\*•]\s/.test(line.trim()) || /^\d+\.\s/.test(line.trim())
+          )
+        ) {
+          // Looks like a list
+          const listItems = trimmedLines
+            .map((line) => {
+              const cleaned = line
+                .trim()
+                .replace(/^[\-\*•]\s*/, "")
+                .replace(/^\d+\.\s*/, "");
+              return `<li>${cleaned}</li>`;
+            })
+            .join("");
+          htmlContent = `<ul>${listItems}</ul>`;
+        } else if (trimmedLines.length === 1) {
+          // Single line - make it a paragraph
+          htmlContent = `<p>${content.trim()}</p>`;
+        } else {
+          // Multiple lines - make paragraphs
+          htmlContent = trimmedLines.map((line) => `<p>${line}</p>`).join("");
+        }
+      } else {
+        // Default: paragraph format
+        const lines = content.split("\n").filter((line) => line.trim());
+        htmlContent = lines.map((line) => `<p>${line}</p>`).join("");
+      }
+
+      // Insert content into editor
+      console.log(
+        "[Cowrite] Inserting content, append:",
+        append,
+        "htmlContent:",
+        htmlContent
+      );
+      if (append) {
+        // Append to end
+        editor
+          .chain()
+          .focus()
+          .setContent(editor.getHTML() + htmlContent)
+          .run();
+      } else {
+        // Replace all content
+        editor.chain().focus().setContent(htmlContent).run();
+      }
+
+      // Send updated content to server
+      sendDocumentContent();
+    };
+
+    // Listen for host global updates
+    window.addEventListener("openai:set_globals", handleGlobalsChange);
+
+    // Check initial toolOutput on mount
+    if (window.openai?.toolOutput?.action === "write-content") {
+      processWriteContent(window.openai.toolOutput);
+    }
+
+    return () => {
+      window.removeEventListener("openai:set_globals", handleGlobalsChange);
+    };
+  }, [editor]);
 
   // Send document content to MCP server
   const sendDocumentContent = async () => {
@@ -223,12 +350,12 @@ function CowriteEditor() {
         <MenuBar editor={editor} />
         <div className="editor-content">
           <EditorContent editor={editor} />
-          
+
           {/* BubbleMenu for adding comments on text selection */}
           {editor && (
             <BubbleMenu
               editor={editor}
-              tippyOptions={{ duration: 100, placement: 'top' }}
+              tippyOptions={{ duration: 100, placement: "top" }}
               className="bubble-menu-container"
             >
               <button

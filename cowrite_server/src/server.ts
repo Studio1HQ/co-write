@@ -160,6 +160,41 @@ const cowriteTools: Tool[] = [
       readOnlyHint: true,
     },
   },
+  {
+    name: "cowrite-write-content",
+    description:
+      "Write or insert content into the Cowrite document. Use this when the user wants to add text, notes, formatted content, or any written material to the document. This will open the document and insert the provided content in a well-formatted manner. Use this for requests like 'write this in the document', 'add these notes', 'insert this text', or 'put this in my doc'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        content: {
+          type: "string",
+          description:
+            "The content to write into the document. Can be plain text or formatted content.",
+        },
+        format: {
+          type: "string",
+          enum: ["paragraph", "heading", "list", "auto"],
+          description:
+            "How to format the content. 'auto' will intelligently detect the best format. Default is 'auto'.",
+        },
+        append: {
+          type: "boolean",
+          description:
+            "If true, append to existing content. If false, replace content. Default is true.",
+        },
+      },
+      required: ["content"],
+      additionalProperties: false,
+    },
+    title: "Write Content to Document",
+    _meta: widgetDescriptorMeta(cowriteWidget),
+    annotations: {
+      destructiveHint: false,
+      openWorldHint: false,
+      readOnlyHint: false,
+    },
+  },
 ];
 
 // Combine all tools
@@ -315,12 +350,59 @@ function createCowriteServer(): Server {
         };
       }
 
+      // Handle cowrite-write-content tool
+      if (toolName === "cowrite-write-content") {
+        const args = (request.params.arguments ?? {}) as {
+          content: string;
+          format?: "paragraph" | "heading" | "list" | "auto";
+          append?: boolean;
+        };
+
+        const cowriteWidget = widgetsById.get("cowrite");
+        if (!cowriteWidget) {
+          throw new Error("Cowrite widget not found");
+        }
+
+        if (!args.content || args.content.trim().length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "❌ Cannot write empty content to the document. Please provide some text to insert.",
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        const format = args.format || "auto";
+        const append = args.append !== undefined ? args.append : true;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✍️ Writing content to the document...\n\n${
+                append ? "Appending" : "Replacing"
+              } content with ${format} formatting.`,
+            },
+          ],
+          structuredContent: {
+            action: "write-content",
+            content: args.content,
+            format,
+            append,
+          },
+          _meta: widgetInvocationMeta(cowriteWidget),
+        };
+      }
+
       // Handle if no tool matched
       return {
         content: [
           {
             type: "text",
-            text: `Unknown tool: ${toolName}. Available tools: cowrite-open, cowrite-get-content`,
+            text: `Unknown tool: ${toolName}. Available tools: cowrite-open, cowrite-get-content, cowrite-write-content`,
           },
         ],
         isError: true,
