@@ -2,6 +2,8 @@
 
 A real-time collaborative document editor with AI integration through ChatGPT. Write, edit, comment, and let AI help you summarize, format, and enhance your documents.
 
+https://github.com/user-attachments/assets/b7a7cb80-ff90-40aa-bf94-0ff1341da009
+
 **Chrome 142+ Users:** You may need to disable the `local-network-access` flag:
 
 - Go to `chrome://flags/`
